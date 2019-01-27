@@ -1,0 +1,18 @@
+{
+  "name": "diccore",
+  "version": "1.0.0",
+  "description": "mdd/mdx file parse engine",
+  "main": "mdx.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "adler32": "^0.1.7",
+    "crypto-api": "^0.8.3",
+    "python-struct": "^1.0.6",
+    "streamifier": "^0.1.1",
+    "utf8": "^3.0.0"
+  }
+}
