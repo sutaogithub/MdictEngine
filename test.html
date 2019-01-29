@@ -1,0 +1,14 @@
+<html>
+    <head>
+
+    </head>
+    <body>
+        
+        <script src="https://nf404.github.io/crypto-api/crypto-api.min.js"></script>
+        <script>
+         var hasher = CryptoApi.getHasher('ripemd128');
+         hasher.update([0x95,0x36,0x00,0x00]);
+         console.log(CryptoApi.encoder.toHex(hasher.finalize()));
+        </script> 
+    </body>
+</html>

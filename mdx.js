@@ -1,11 +1,11 @@
-
 const struct = require('python-struct');
 const utf8 = require('utf8');
 const fs = require("fs");
 const adler32 = require("adler32");
 const assert = require('assert');
 const streamifier = require('streamifier');
-
+const crypto = require('./crypto-api.js');
+const zlib = require('zlib');
 
 
 function _unescape_entities(text) {
@@ -23,11 +23,40 @@ function _unescape_entities(text) {
 //     return encrypt_key
 // }
 
-function _mdx_decrypt(comp_block){
-
-    // key = ripemd128(comp_block[4:8] + pack(b'<L', 0x3695));
-    // return comp_block[0:8] + _fast_decrypt(comp_block[8:], key);
+function ripemd128(byte) {
+    console.log("before");    
+    
+    console.log(byte);
+    
+    let hasher = crypto.getHasher('ripemd128');
+    hasher.update(byte);
+    let raw = hasher.finalize();
+    let buf = Buffer.alloc(raw.length);
+    console.log(crypto.encoder.toHex(raw));
+    for (let i = 0, l = raw.length; i < l; i++) {
+        buf[i] = parseInt(raw.charCodeAt(i));
+    }
+    return buf;
 }
+
+function _mdx_decrypt(comp_block){
+    let key = ripemd128(Buffer.concat([comp_block.slice(4,8),struct.pack('<L', 0x3695)],8));
+    let block_decrypt = _fast_decrypt(comp_block.slice(8,comp_block.length), key);
+    let block_header = comp_block.slice(0,8);
+    return Buffer.concat([block_header,block_decrypt],block_decrypt.length+block_header.length) ;
+}
+
+function _fast_decrypt(data, key){
+    let previous = 0x36;
+    for(let i = 0;i<data.length;i++){
+        let t = (data[i] >> 4 | data[i] << 4) & 0xff;
+        t = t ^ previous ^ (i & 0xff) ^ key[i % key.length];
+        previous = data[i];
+        data[i] = t;
+        return data;
+    }       
+}
+
    
 
 function _buffer_equals(buf1, buf2) {
@@ -54,7 +83,6 @@ class MDict {
         this._fname = fname;
         this._encoding = encoding.toUpperCase();
         this._passcode = passcode;
-
         this.header = this._read_header();
 
 
@@ -67,25 +95,27 @@ class MDict {
     }
 
     _parse_header(header_text) {
-        let taglist = header_text.match(/(\w+)="([\d\D]*?)"/g);
+        let taglist = header_text.match(/(\w+)="((.|\r|\n)*?)"/g);
         let tagdict = {};
         for (let item of taglist) {
-            let temp = item.split('=');
-            tagdict[temp[0]] = _unescape_entities(temp[1].replace(/"/g, ""));
+            let first_equal = item.indexOf("=");
+            let key = item.substring(0,first_equal);
+            let value = item.substring(first_equal+1,item.length);
+            tagdict[key] = _unescape_entities(value.replace(/"/g, ""));
         }
         return tagdict;
     }
 
     _read_header() {
         let fd = fs.openSync(this._fname, "r");
-        let buffer4 = new Buffer(4);
+        let buffer4 = Buffer.alloc(4);
         let file_pointer = 0;
 
         fs.readSync(fd, buffer4, 0, 4, null);
         file_pointer += 4;
 
         let header_bytes_size = struct.unpack('>I', buffer4)[0];
-        let header_bytes = new Buffer(header_bytes_size);
+        let header_bytes = Buffer.alloc(header_bytes_size);
         fs.readSync(fd, header_bytes, 0, header_bytes_size, null);
         file_pointer += header_bytes_size;
 
@@ -97,10 +127,11 @@ class MDict {
 
         fs.closeSync(fd);
 
-
+        
         let header_text = header_bytes.toString("utf16le", 0, header_bytes.length - 2);
+        // console.log(header_text);        
         let header_tag = this._parse_header(header_text);
-        console.log(header_tag);
+        // console.log(header_tag);
 
         if (!this._encoding) {
             let encoding = header_tag['Encoding']
@@ -149,7 +180,7 @@ class MDict {
             num_bytes = 4 * 4;
         }
 
-        let unit_buffer = new Buffer(num_bytes);
+        let unit_buffer = Buffer.alloc(num_bytes);
         fs.readSync(fd, unit_buffer, 0, num_bytes, file_pointer);
         file_pointer += num_bytes;
 
@@ -172,11 +203,8 @@ class MDict {
         //     block = _salsa_decrypt(block, encrypted_key)
         // }
         let sf = streamifier.createReadStream(unit_buffer);
-
         let num_key_blocks = this._read_number(sf);
         this._num_entries = this._read_number(sf)
-        console.log(num_key_blocks);
-        console.log(this._num_entries);
         let key_block_info_decomp_size = 0;
         if (this._version >= 2.0) {
             let key_block_info_decomp_size = this._read_number(sf);
@@ -186,7 +214,7 @@ class MDict {
 
         //4 bytes: adler checksum of previous 5 numbers
         if (this._version >= 2.0) {
-            let buffer4 = new Buffer(4);
+            let buffer4 = Buffer.alloc(4);
             fs.readSync(fd, buffer4, 0, 4, file_pointer);
             file_pointer += 4;
             let checksum = adler32.sum(unit_buffer);
@@ -194,33 +222,34 @@ class MDict {
         }
 
         // read key block info, which indicates key block's compressed and decompressed size
-        let key_block_info = new Buffer(key_block_info_size);
+        let key_block_info = Buffer.alloc(key_block_info_size);
         fs.readSync(fd, key_block_info, 0, key_block_info_size, file_pointer);
         file_pointer += key_block_info_size;
-        key_block_info_list = this._decode_key_block_info(key_block_info)
-        assert(num_key_blocks == len(key_block_info_list))
+        key_block_info_list = this._decode_key_block_info(key_block_info);
+        // assert.strictEqual(num_key_blocks, len(key_block_info_list));
     }
 
-    // _decode_key_block_info(key_block_info_compressed) {
-    //     if (this._version >= 2){
-    //         //zlib compression
-    //         assert(_buffer_equals(key_block_info_compressed.slice(0,4),new Buffer([0x02,0x00,0x00,0x00]));
-    //         //decrypt if needed
-    //         if (this._encrypt & 0x02) {
-    //             key_block_info_compressed = _mdx_decrypt(key_block_info_compressed)
-    //         }
-    //         //decompress
-    //         key_block_info = zlib.decompress(key_block_info_compressed[8:])
-    //         //adler checksum
-    //         adler32 = unpack('>I', key_block_info_compressed[4:8])[0]
-    //         assert(adler32 == zlib.adler32(key_block_info) & 0xffffffff)
-    //     }
+    _decode_key_block_info(key_block_info_compressed) {
+        let key_block_info = null;
+        if (this._version >= 2){
+            //zlib compression
+            assert.strictEqual(_buffer_equals(key_block_info_compressed.slice(0,4),Buffer.from([0x02,0x00,0x00,0x00])), true );
+            //decrypt if needed
+            if (this._encrypt & 0x02) {
+                key_block_info_compressed = _mdx_decrypt(key_block_info_compressed);
+            }
+            //decompress
+            // let key_block_info = zlib.inflateRawSync(key_block_info_compressed.slice(8,key_block_info_compressed.length));
+            // //adler checksum
+            // adler32 = struct.unpack('>I', key_block_info_compressed.slice(4,8))[0];
+            // assert.strictEqual(adler32, adler32.sum(key_block_info) & 0xffffffff);
+        }else{
+            // no compression
+            key_block_info = key_block_info_compressed
+        }
             
-    //     else:
-    //         # no compression
-    //         key_block_info = key_block_info_compressed
 
-    // }
+    }
 
     _read_number(f) {
         if (this._version < 2.0) {
@@ -228,7 +257,8 @@ class MDict {
             return struct.unpack(this._number_format, f.read(this._number_width))[0];
         } else {
             //_number_format ='>Q',对于长整型，unpack返回的是一个包含高位和低位值的对象
-            let long = struct.unpack(this._number_format, f.read(this._number_width))[0];
+            let temp = f.read(this._number_width);
+            let long = struct.unpack(this._number_format, temp)[0];
             //将高位左移动32位，js中超过32位的数字不能用位运算符
             return long.high * Math.pow(2, 32) + long.low;
         }
@@ -238,7 +268,7 @@ class MDict {
 
 
 
-// let o = new MDict("./collins_en_ch.mdx");
+let o = new MDict("./collins.mdx");
 
 
 //Long { low: 1006650368, high: 1648, unsigned: true }
