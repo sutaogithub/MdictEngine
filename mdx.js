@@ -24,15 +24,13 @@ function _unescape_entities(text) {
 // }
 
 function ripemd128(byte) {
-    console.log("before");    
-    
-    console.log(byte);
-    
+    let temp =_buffer_to_hex(byte);
+    console.log(temp);
     let hasher = crypto.getHasher('ripemd128');
-    hasher.update(byte);
+    hasher.update(temp);
     let raw = hasher.finalize();
-    let buf = Buffer.alloc(raw.length);
     console.log(crypto.encoder.toHex(raw));
+    let buf = Buffer.alloc(raw.length);
     for (let i = 0, l = raw.length; i < l; i++) {
         buf[i] = parseInt(raw.charCodeAt(i));
     }
@@ -41,6 +39,7 @@ function ripemd128(byte) {
 
 function _mdx_decrypt(comp_block){
     let key = ripemd128(Buffer.concat([comp_block.slice(4,8),struct.pack('<L', 0x3695)],8));
+    console.log(key);
     let block_decrypt = _fast_decrypt(comp_block.slice(8,comp_block.length), key);
     let block_header = comp_block.slice(0,8);
     return Buffer.concat([block_header,block_decrypt],block_decrypt.length+block_header.length) ;
@@ -53,11 +52,18 @@ function _fast_decrypt(data, key){
         t = t ^ previous ^ (i & 0xff) ^ key[i % key.length];
         previous = data[i];
         data[i] = t;
-        return data;
     }       
+    return data;
 }
 
-   
+function _buffer_to_hex (buffer){
+    let result = '';
+    for(let i = 0;i<buffer.length;i++){
+        let hex =String.fromCharCode(buffer[i]);
+        result+=hex; 
+    }
+    return result;
+}
 
 function _buffer_equals(buf1, buf2) {
     var len = buf1.length;
@@ -225,7 +231,7 @@ class MDict {
         let key_block_info = Buffer.alloc(key_block_info_size);
         fs.readSync(fd, key_block_info, 0, key_block_info_size, file_pointer);
         file_pointer += key_block_info_size;
-        key_block_info_list = this._decode_key_block_info(key_block_info);
+        let  key_block_info_list = this._decode_key_block_info(key_block_info);
         // assert.strictEqual(num_key_blocks, len(key_block_info_list));
     }
 
@@ -237,17 +243,18 @@ class MDict {
             //decrypt if needed
             if (this._encrypt & 0x02) {
                 key_block_info_compressed = _mdx_decrypt(key_block_info_compressed);
+                let fd = fs.openSync('compress_byte', "w");
+                fs.writeFileSync(fd, key_block_info_compressed);
             }
             //decompress
-            // let key_block_info = zlib.inflateRawSync(key_block_info_compressed.slice(8,key_block_info_compressed.length));
-            // //adler checksum
-            // adler32 = struct.unpack('>I', key_block_info_compressed.slice(4,8))[0];
-            // assert.strictEqual(adler32, adler32.sum(key_block_info) & 0xffffffff);
+            let key_block_info = zlib.inflateSync(key_block_info_compressed.slice(8,key_block_info_compressed.length));
+            //adler checksum
+            let checksum = struct.unpack('>I', key_block_info_compressed.slice(4,8))[0];
+            assert.strictEqual(checksum, adler32.sum(key_block_info) & 0xffffffff);
         }else{
             // no compression
             key_block_info = key_block_info_compressed
         }
-            
 
     }
 

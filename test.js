@@ -1,22 +1,20 @@
-import Ripemd from "crypto-api/src/hasher/ripemd";
-import {toHex} from "crypto-api/src/encoder/hex";
+// import Ripemd from "crypto-api/src/hasher/ripemd";
+// import {toHex} from "crypto-api/src/encoder/hex";
 
-let hasher = new Ripemd({length:128});
-hasher.update(Buffer.from([0x95,0x36,0x00,0x00]));
-console.log(toHex(hasher.finalize()));
-
-
-
-// const crypto = require('./crypto-api.js');
-
-
-// let hasher = crypto.getHasher('ripemd128');
-// // hasher.update(Buffer.from([0x1c,0x3a,0xb8,0x86,0x95,0x36,0x00,0x00]));
-
+// let hasher = new Ripemd({length:128});
 // hasher.update(Buffer.from([0x95,0x36,0x00,0x00]));
+// console.log(toHex(hasher.finalize()));
 
-// let raw = hasher.finalize();
-// console.log(crypto.encoder.toHex(raw));
+
+
+
+
+data = Buffer.from([0x45,0x23,0x09,0x57,0x95,0x36,0x00,0x00]);
+
+
+let t = (data[0] >> 4 | data[0] << 4) & 0xff;
+console.log(t)
+
 
 
 
