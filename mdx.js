@@ -6,6 +6,7 @@ const assert = require('assert');
 const streamifier = require('streamifier');
 const crypto = require('./crypto-api.js');
 const zlib = require('zlib');
+const lzo = require("lzo");
 
 
 function _unescape_entities(text) {
@@ -259,28 +260,31 @@ class MDict {
             let key_block_type = key_block_compressed.slice(start,start+4);
             // 4 bytes : adler checksum of decompressed key block
             checksum = struct.unpack('>I', key_block_compressed.slice(start+4,start+8))[0];
+
+            let key_block;
+
             if (_buffer_equals(key_block_type,Buffer.from([0x00,0x00,0x00,0x00]))){
-                key_block = key_block_compressed.slice[start+8:end]
-                
+                key_block = key_block_compressed.slice(start+8,end);
+            }else if (_buffer_equals(key_block_type,Buffer.from([0x01,0x00,0x00,0x00]))){
+                if (lzo ==null){
+                    console.log("LZO compression is not supported");
+                    break;
+                }
+                 // decompress key block
+                let header =Buffer.concat([Buffer.from([0xf0]),struct.pack('>I', item['decompressed_size'])],5);
+                let compress_byte = Buffer.concat([header, key_block_compressed.slice(start+8,end)],end-start-3);
+                key_block = lzo.decompress(compress_byte,compress_byte.length);
+            }else if (_buffer_equals(key_block_type,Buffer.from([0x02,0x00,0x00,0x00]))){
+                // decompress key block
+                key_block = zlib.inflateSync(key_block_compressed.slice(start+8,end));
             }
-            elif key_block_type == b'\x01\x00\x00\x00':
-                if lzo is None:
-                    print("LZO compression is not supported")
-                    break
-                # decompress key block
-                header = b'\xf0' + pack('>I', decompressed_size)
-                key_block = lzo.decompress(header + key_block_compressed[start+8:end])
-            elif key_block_type == b'\x02\x00\x00\x00':
-                # decompress key block
-                key_block = zlib.decompress(key_block_compressed[start+8:end])
-            # extract one single key block into a key list
-            key_list += self._split_key_block(key_block)
-            # notice that adler32 returns signed value
-            assert(adler32 == zlib.adler32(key_block) & 0xffffffff)
-    
-            i += compressed_size
+            //extract one single key block into a key list
+            // key_list.push(this._split_key_block(key_block));
+            //notice that adler32 returns signed value
+            assert.strictEqual(checksum,adler32.sum(key_block) & 0xffffffff);
+            i += compressed_size;
         } 
-        return key_list
+        return key_list;
     }
   
 
