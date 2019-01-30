@@ -232,8 +232,59 @@ class MDict {
         fs.readSync(fd, key_block_info, 0, key_block_info_size, file_pointer);
         file_pointer += key_block_info_size;
         let  key_block_info_list = this._decode_key_block_info(key_block_info);
-        // assert.strictEqual(num_key_blocks, len(key_block_info_list));
+        assert.strictEqual(num_key_blocks, key_block_info_list.length);
+
+        //read key block  
+        let key_block_compressed = Buffer.alloc(key_block_size);
+        fs.readSync(fd, key_block_compressed, 0, key_block_size, file_pointer);
+        file_pointer+=key_block_size;
+
+        //extract key block
+        let key_list = this._decode_key_block(key_block_compressed, key_block_info_list);
+
+        this._record_block_offset = file_pointer;
+
+        fs.close(fd);
+
+        return key_list;
     }
+
+     _decode_key_block(key_block_compressed, key_block_info_list){
+        let key_list = [];
+        let i = 0;
+        for (item of key_block_info_list){
+            let start = i;
+            let end = i + item['compressed_size'];
+            // 4 bytes : compression type
+            let key_block_type = key_block_compressed.slice(start,start+4);
+            // 4 bytes : adler checksum of decompressed key block
+            checksum = struct.unpack('>I', key_block_compressed.slice(start+4,start+8))[0];
+            if (_buffer_equals(key_block_type,Buffer.from([0x00,0x00,0x00,0x00]))){
+                key_block = key_block_compressed.slice[start+8:end]
+                
+            }
+            elif key_block_type == b'\x01\x00\x00\x00':
+                if lzo is None:
+                    print("LZO compression is not supported")
+                    break
+                # decompress key block
+                header = b'\xf0' + pack('>I', decompressed_size)
+                key_block = lzo.decompress(header + key_block_compressed[start+8:end])
+            elif key_block_type == b'\x02\x00\x00\x00':
+                # decompress key block
+                key_block = zlib.decompress(key_block_compressed[start+8:end])
+            # extract one single key block into a key list
+            key_list += self._split_key_block(key_block)
+            # notice that adler32 returns signed value
+            assert(adler32 == zlib.adler32(key_block) & 0xffffffff)
+    
+            i += compressed_size
+        } 
+        return key_list
+    }
+  
+
+
 
     _decode_key_block_info(key_block_info_compressed) {
         let key_block_info = null;
@@ -243,11 +294,11 @@ class MDict {
             //decrypt if needed
             if (this._encrypt & 0x02) {
                 key_block_info_compressed = _mdx_decrypt(key_block_info_compressed);
-                let fd = fs.openSync('compress_byte', "w");
-                fs.writeFileSync(fd, key_block_info_compressed);
+                // let fd = fs.openSync('compress_byte', "w");
+                // fs.writeFileSync(fd, key_block_info_compressed);
             }
             //decompress
-            let key_block_info = zlib.inflateSync(key_block_info_compressed.slice(8,key_block_info_compressed.length));
+            key_block_info = zlib.inflateSync(key_block_info_compressed.slice(8,key_block_info_compressed.length));
             //adler checksum
             let checksum = struct.unpack('>I', key_block_info_compressed.slice(4,8))[0];
             assert.strictEqual(checksum, adler32.sum(key_block_info) & 0xffffffff);
@@ -256,6 +307,52 @@ class MDict {
             key_block_info = key_block_info_compressed
         }
 
+        // decode
+        let key_block_info_list = [];
+        let num_entries = 0;
+        let i = 0;
+        let byte_format ,byte_width,text_term;
+
+        if (this._version>= 2) {
+            byte_format = '>H';
+            byte_width = 2;
+            text_term = 1;
+        } else{
+            byte_format = '>B';
+            byte_width = 1;
+            text_term = 0;
+        }
+        while (i < key_block_info.length){
+            // number of entries in current key block
+            num_entries += struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0];
+            i += this._number_width;
+            // text head size
+            let text_head_size = struct.unpack(byte_format, key_block_info.slice(i,i+byte_width))[0];
+            i += byte_width;
+            // text head
+            if (this._encoding != 'UTF-16'){
+                i += text_head_size + text_term;            
+            }else {
+                i += (text_head_size + text_term) * 2;  
+            }
+            // text tail size
+            let text_tail_size = struct.unpack(byte_format, key_block_info.slice(i,i+byte_width))[0];
+            i += byte_width;
+            // text tail
+            if (this._encoding != 'UTF-16'){
+                i += text_tail_size + text_term;                
+            }else{
+                i += (text_tail_size + text_term) * 2 ;               
+            }
+            //key block compressed size
+            let key_block_compressed_size = struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0];
+            i += this._number_width;
+            // key block decompressed size
+            let key_block_decompressed_size = struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0];
+            i += this._number_width;
+            key_block_info_list.push({'compressed_size':key_block_compressed_size,'decompressed_size':key_block_decompressed_size});
+        }
+        return key_block_info_list;
     }
 
     _read_number(f) {
