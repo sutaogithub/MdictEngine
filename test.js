@@ -1,17 +1,12 @@
 let Long  = require("long");
 
-let first = new Long(13163,0,true);
-console.log(first instanceof Long);
+// let first = new Long(13163,0,true);
+// console.log(first instanceof Long);
 
 
 
-// import Ripemd from "crypto-api/src/hasher/ripemd";
-// import {toHex} from "crypto-api/src/encoder/hex";
-
-// let hasher = new Ripemd({length:128});
-// hasher.update(Buffer.from([0x95,0x36,0x00,0x00]));
-// console.log(toHex(hasher.finalize()));
-
+let buf = Buffer.from([0x95,0x36,0x00,0x00,0x95,0x36,0x00]);
+console.log(buf.toString("UTF-16"));
 
 
 
