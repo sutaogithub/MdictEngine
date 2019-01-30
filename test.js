@@ -1,3 +1,10 @@
+let Long  = require("long");
+
+let first = new Long(13163,0,true);
+console.log(first instanceof Long);
+
+
+
 // import Ripemd from "crypto-api/src/hasher/ripemd";
 // import {toHex} from "crypto-api/src/encoder/hex";
 
@@ -9,11 +16,11 @@
 
 
 
-data = Buffer.from([0x45,0x23,0x09,0x57,0x95,0x36,0x00,0x00]);
+// data = Buffer.from([0x45,0x23,0x09,0x57,0x95,0x36,0x00,0x00]);
 
 
-let t = (data[0] >> 4 | data[0] << 4) & 0xff;
-console.log(t)
+// let t = (data[0] >> 4 | data[0] << 4) & 0xff;
+// console.log(t)
 
 
 

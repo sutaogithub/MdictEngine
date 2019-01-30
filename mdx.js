@@ -6,7 +6,9 @@ const assert = require('assert');
 const streamifier = require('streamifier');
 const crypto = require('./crypto-api.js');
 const zlib = require('zlib');
-const lzo = require("lzo");
+const lzo = require("lzo-decompress");
+const Long = require("long");
+
 
 
 function _unescape_entities(text) {
@@ -26,11 +28,11 @@ function _unescape_entities(text) {
 
 function ripemd128(byte) {
     let temp =_buffer_to_hex(byte);
-    console.log(temp);
+    // console.log(temp);
     let hasher = crypto.getHasher('ripemd128');
     hasher.update(temp);
     let raw = hasher.finalize();
-    console.log(crypto.encoder.toHex(raw));
+    // console.log(crypto.encoder.toHex(raw));
     let buf = Buffer.alloc(raw.length);
     for (let i = 0, l = raw.length; i < l; i++) {
         buf[i] = parseInt(raw.charCodeAt(i));
@@ -40,7 +42,7 @@ function ripemd128(byte) {
 
 function _mdx_decrypt(comp_block){
     let key = ripemd128(Buffer.concat([comp_block.slice(4,8),struct.pack('<L', 0x3695)],8));
-    console.log(key);
+    // console.log(key);
     let block_decrypt = _fast_decrypt(comp_block.slice(8,comp_block.length), key);
     let block_header = comp_block.slice(0,8);
     return Buffer.concat([block_header,block_decrypt],block_decrypt.length+block_header.length) ;
@@ -80,6 +82,14 @@ function _buffer_equals(buf1, buf2) {
 }
 
 
+function _parse_long (number){
+    //将long对象转成一个整数，注意此方法存在溢出的风险。
+    if(number instanceof Long){
+        return number.high * Math.pow(2, 32) + number.low;   
+    } else {
+        return number;
+    }
+}
 
 
 
@@ -245,44 +255,56 @@ class MDict {
 
         this._record_block_offset = file_pointer;
 
-        fs.close(fd);
+        fs.closeSync(fd);
 
         return key_list;
     }
 
      _decode_key_block(key_block_compressed, key_block_info_list){
+
+        console.log(key_block_info_list);
+
         let key_list = [];
         let i = 0;
-        for (item of key_block_info_list){
+        for (let item of key_block_info_list){
+            console.log(key_block_compressed.length);
+            
             let start = i;
             let end = i + item['compressed_size'];
             // 4 bytes : compression type
             let key_block_type = key_block_compressed.slice(start,start+4);
             // 4 bytes : adler checksum of decompressed key block
-            checksum = struct.unpack('>I', key_block_compressed.slice(start+4,start+8))[0];
-
+            console.log("slice : start = "+start+"  end = "+end);
+            let checksum = struct.unpack('>I', key_block_compressed.slice(start+4,start+8))[0];
             let key_block;
+            
 
             if (_buffer_equals(key_block_type,Buffer.from([0x00,0x00,0x00,0x00]))){
                 key_block = key_block_compressed.slice(start+8,end);
+                console.log("no compression");
             }else if (_buffer_equals(key_block_type,Buffer.from([0x01,0x00,0x00,0x00]))){
                 if (lzo ==null){
                     console.log("LZO compression is not supported");
                     break;
                 }
+                console.log("lzo decompression");
+                
                  // decompress key block
                 let header =Buffer.concat([Buffer.from([0xf0]),struct.pack('>I', item['decompressed_size'])],5);
                 let compress_byte = Buffer.concat([header, key_block_compressed.slice(start+8,end)],end-start-3);
                 key_block = lzo.decompress(compress_byte,compress_byte.length);
             }else if (_buffer_equals(key_block_type,Buffer.from([0x02,0x00,0x00,0x00]))){
                 // decompress key block
+                console.log("zlib decompression");
                 key_block = zlib.inflateSync(key_block_compressed.slice(start+8,end));
             }
             //extract one single key block into a key list
             // key_list.push(this._split_key_block(key_block));
             //notice that adler32 returns signed value
-            assert.strictEqual(checksum,adler32.sum(key_block) & 0xffffffff);
-            i += compressed_size;
+            // console.log(typeof key_block);
+            // assert.strictEqual(checksum,adler32.sum(key_block) & 0xffffffff);
+            i += item['compressed_size'];
+            console.log("\n");
         } 
         return key_list;
     }
@@ -328,7 +350,7 @@ class MDict {
         }
         while (i < key_block_info.length){
             // number of entries in current key block
-            num_entries += struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0];
+            num_entries += _parse_long(struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0]);
             i += this._number_width;
             // text head size
             let text_head_size = struct.unpack(byte_format, key_block_info.slice(i,i+byte_width))[0];
@@ -349,10 +371,10 @@ class MDict {
                 i += (text_tail_size + text_term) * 2 ;               
             }
             //key block compressed size
-            let key_block_compressed_size = struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0];
+            let key_block_compressed_size = _parse_long(struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0]);
             i += this._number_width;
             // key block decompressed size
-            let key_block_decompressed_size = struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0];
+            let key_block_decompressed_size =_parse_long(struct.unpack(this._number_format, key_block_info.slice(i,i+this._number_width))[0]);
             i += this._number_width;
             key_block_info_list.push({'compressed_size':key_block_compressed_size,'decompressed_size':key_block_decompressed_size});
         }
@@ -368,9 +390,11 @@ class MDict {
             let temp = f.read(this._number_width);
             let long = struct.unpack(this._number_format, temp)[0];
             //将高位左移动32位，js中超过32位的数字不能用位运算符
-            return long.high * Math.pow(2, 32) + long.low;
+            return _parse_long(long);
         }
     }
+
+  
 
 }
 
