@@ -223,7 +223,7 @@ class MDict {
         let header_text = header_bytes.toString("utf16le", 0, header_bytes.length - 2);
         // console.log(header_text);        
         let header_tag = this._parse_header(header_text);
-        // console.log(header_tag);
+        console.log(header_tag);
 
         if (!this._encoding) {
             let encoding = header_tag['Encoding']
@@ -380,7 +380,7 @@ class MDict {
             assert.strictEqual(checksum,adler32.sum(key_block));
             i += item['compressed_size'];
         } 
-        console.log(key_list);
+        // console.log(key_list);
         return key_list;
     }
 
@@ -589,7 +589,7 @@ class MDD extends MDict{
                 let data = record_block.slice(record_start-offset,record_end-offset);
 
                 output = {"key_text":key_text, "data":data};
-                yield output;
+                // yield output;
             }
             offset += record_block.length;
             size_counter += item['compressed_size'];
@@ -605,28 +605,31 @@ class MDX extends MDict{
 
     constructor(fname, encoding='', substyle=false, passcode=null){
         super(fname,encoding,passcode);
-        this._substyle = _substyle;
+        this._substyle = substyle;
     }
 
     items(){
         return this._decode_record_block();
     }
+
      _substitute_stylesheet(txt){
         // substitute stylesheet definition
         let txt_list = txt.split(/`\d+`/g);
-        // txt_tag = re.findall('`\d+`', txt)
-        // txt_styled = txt_list[0]
-        // for j, p in enumerate(txt_list[1:]):
-        //     style = self._stylesheet[txt_tag[j][1:-1]]
-        //     if p and p[-1] == '\n':
-        //         txt_styled = txt_styled + style[0] + p.rstrip() + style[1] + '\r\n'
-        //     else:
-        //         txt_styled = txt_styled + style[0] + p + style[1]
-        // return txt_styled
+        let txt_tag = txt.match(/`\d+`/g);
+        let txt_styled = txt_list[0];
+        for(let p=1,j = 0;p<txt_list.length;p++,j++){
+            let style = this._stylesheet[txt_tag[j].substring(1,-1)];
+            if (txt_list[p] && txt_list[txt_list.length-1] == '\n'){
+                txt_styled = txt_styled + style[0] + txt_list[p].replace(/\s+$/g, ''); + style[1] + '\r\n';
+            }else{
+                    txt_styled = txt_styled + style[0] + p + style[1];
+            }
+        }
+        return txt_styled;
      }
     
     
-     _decode_record_block(){
+    _decode_record_block (){
         let f = fs.createReadStream(this._fname,{start:this._record_block_offset});
         let num_record_blocks = this._read_number(f);
         let num_entries = this._read_number(f);
@@ -698,7 +701,7 @@ class MDX extends MDict{
                     record =  this._substitute_stylesheet(record);
                 }
                 output = {"key_text":key_text, "data":record};
-                yield output;
+                return  output;
             }
             offset += record_block.length;
             size_counter += item['compressed_size'];
@@ -712,4 +715,4 @@ class MDX extends MDict{
 
 
 
-let o = new MDict("./collins.mdx");
+let o = new MDX("./collins.mdx");
