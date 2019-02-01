@@ -1,20 +1,35 @@
-const fs =  require("fs")
+const fs =  require("fs");
+const path =  require('path');
 
-let f = fs.createReadStream("./collins.mdx");
+let node_modules = fs.statSync('./node_modules');
 
- async function asyncfunc() {  
-    return new Promise(resolve => {
-        let f = fs.createReadStream("./collins.mdx");
-        f.on('readable', function () {
-            resolve(f);
-        });
-    });
+let ss = './node/ee/ss/s';
+ss = ss.replace(/\\/g,path.sep);
+console.log(ss);
+console.log(path.dirname(ss));
+
+for(let index of item_wrapper()){
+    console.log(index);
 }
+// let path = '.\node\ee\ss';
+
+// path.replace(/\\/g,)
 
 
-async function test() {
-    let ret = await asyncfunc()
+// estract('.\node\ee\ss');
 
-    console.log(f.read(8));
+// function estract(path){
+//     if(!fs.existsSync(path)) {
+//         fs.mkdirSync(path);
+//     }
+
+// }
+
+function item_wrapper( ){
+    function* items(){
+        yield 1;
+        yield 2;
+        yield 3;
+    }
+     return items();
 }
-

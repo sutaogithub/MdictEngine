@@ -8,6 +8,7 @@ const crypto = require('./crypto-api.js');
 const zlib = require('zlib');
 const lzo = require("lzo-decompress");
 const Long = require("long");
+const path = require('path');
 
 
 
@@ -147,7 +148,7 @@ class MDict {
             file_pointer += 1024;
 
             let index = -1;
-            for (i = 0; i < t.length; i += 4) {
+            for (let i = 0; i < t.length; i += 4) {
                 if (_buffer_equals(t.slice(i, i + 4), key_block_type)) {
                     index = i;
                     break;
@@ -375,7 +376,7 @@ class MDict {
                 key_block = zlib.inflateSync(key_block_compressed.slice(start + 8, end));
             }
             //extract one single key block into a key list
-            key_list.push.apply(key_list,this._split_key_block(key_block));
+            key_list.push.apply(key_list, this._split_key_block(key_block));
             //notice that adler32 returns signed value
             assert.strictEqual(checksum, adler32.sum(key_block));
             i += item['compressed_size'];
@@ -527,107 +528,128 @@ class MDD extends MDict {
         return this._decode_record_block();
     }
 
+    estract(filepath) {
+        if (!fs.existsSync(filepath)) {
+            fs.mkdirSync(filepath);
+        }
+
+        for (let item of items()) {
+            let fname = item.key_text.replace(/\\/g, path.sep);
+            let dfname = datafolder + fname;
+            if (!fs.existsSync(path.dirname(dfname))) {
+                fs.mkdirSync(dfname);
+            }
+            df = fs.openSync(dfname, 'w');
+            fs.writeSync(df, item.data, 0, item.data.length);
+            fs.closeSync(df);
+        }
+    }
+
+
     _decode_record_block() {
-        let fd = fs.openSync(this._fname,'r');
-        let file_pointer = this._record_block_offset;
+        let iterator = function* () {
+            let fd = fs.openSync(this._fname, 'r');
+            let file_pointer = this._record_block_offset;
 
-        let info_block = Buffer.alloc(this._number_width*4);
-        fs.readSync(fd,info_block,0,info_block.length,file_pointer);
-        file_pointer+=info_block.length;
-        
-        let info_block_stream = streamifier.createReadStream(info_block);
-        let num_record_blocks = this._read_number(info_block_stream);
-        let num_entries = this._read_number(info_block_stream);
-        assert.strictEqual(num_entries, this._num_entries);
-        let record_block_info_size = this._read_number(info_block_stream);
-        let record_block_size = this._read_number(info_block_stream);
+            let info_block = Buffer.alloc(this._number_width * 4);
+            fs.readSync(fd, info_block, 0, info_block.length, file_pointer);
+            file_pointer += info_block.length;
 
-
-        let record_size_block = Buffer.alloc(this._number_width*num_record_blocks*2);
-        fs.readSync(fd,record_size_block,0,record_size_block.length,file_pointer);
-        file_pointer+=record_size_block.length;
-        let record_size_stream = streamifier.createReadStream(record_size_block);
-
-        // record block info section
-        let record_block_info_list = []
-        let size_counter = 0
-        for (let i = 0; i < num_record_blocks; i++) {
-            let compressed_size = this._read_number(record_size_stream);
-            let decompressed_size = this._read_number(record_size_stream);
-            record_block_info_list.push({
-                "compressed_size": compressed_size,
-                "decompressed_size": decompressed_size
-            });
-            size_counter += this._number_width * 2
-        }
-        assert.strictEqual(size_counter, record_block_info_size);
+            let info_block_stream = streamifier.createReadStream(info_block);
+            let num_record_blocks = this._read_number(info_block_stream);
+            let num_entries = this._read_number(info_block_stream);
+            assert.strictEqual(num_entries, this._num_entries);
+            let record_block_info_size = this._read_number(info_block_stream);
+            let record_block_size = this._read_number(info_block_stream);
 
 
-        // actual record block
-        let offset = 0;
-        let i = 0;
-        size_counter = 0;
+            let record_size_block = Buffer.alloc(this._number_width * num_record_blocks * 2);
+            fs.readSync(fd, record_size_block, 0, record_size_block.length, file_pointer);
+            file_pointer += record_size_block.length;
+            let record_size_stream = streamifier.createReadStream(record_size_block);
 
-        for (let item of record_block_info_list) {
-            let record_block_compressed = Buffer.alloc(item['compressed_size']);   
-            fs.readSync(fd,record_block_compressed,0,record_block_compressed.length,file_pointer);
-            file_pointer+=record_block_compressed.length;
-
-            // 4 bytes: compression type
-            let record_block_type = record_block_compressed.slice(0, 4);
-            // 4 bytes: adler32 checksum of decompressed record block
-            let checksum = struct.unpack('>I', record_block_compressed.slice(4, 8))[0];
-            let record_block;
-            if (_buffer_equals(record_block_type, Buffer.from([0x00, 0x00, 0x00, 0x00]))) {
-                record_block = record_block_compressed.slice(8, record_block_compressed.length);
-            } else if (_buffer_equals(record_block_type, Buffer.from([0x01, 0x00, 0x00, 0x00]))) {
-                if (lzo == null) {
-                    console.log("LZO compression is not supported");
-                    break;
-                }
-                //decompress
-                let header = Buffer.concat([Buffer.from([0xf0]), struct.pack('>I', item['decompressed_size'])], 5);
-                let compress_byte = Buffer.concat([header, record_block_compressed.slice(8, record_block_compressed.length)], record_block_compressed.length - 3);
-                record_block = lzo.decompress(compress_byte, compress_byte.length);
-            } else if (_buffer_equals(record_block_type, Buffer.from([0x02, 0x00, 0x00, 0x00]))) {
-                // decompress
-                record_block = zlib.inflateSync(record_block_compressed.slice(8, record_block_compressed.length));
+            // record block info section
+            let record_block_info_list = []
+            let size_counter = 0
+            for (let i = 0; i < num_record_blocks; i++) {
+                let compressed_size = this._read_number(record_size_stream);
+                let decompressed_size = this._read_number(record_size_stream);
+                record_block_info_list.push({
+                    "compressed_size": compressed_size,
+                    "decompressed_size": decompressed_size
+                });
+                size_counter += this._number_width * 2
             }
-            // notice that adler32 return signed value & 0xffffffff turn into unsigned
-            // but in js alder32 return unsigned already
-            assert.strictEqual(checksum, adler32.sum(record_block));
+            assert.strictEqual(size_counter, record_block_info_size);
 
-            assert.strictEqual(record_block.length, item['decompressed_size']);
-            // split record block according to the offset info from key block
 
-            while (i < this._key_list.length) {
-                let record_start = this._key_list[i]['key_id'];
-                let key_text = this._key_list[i]['key_text'];
-                // reach the end of current record block
-                if (record_start - offset >= record_block.length) {
-                    break;
+            // actual record block
+            let offset = 0;
+            let i = 0;
+            size_counter = 0;
+
+            for (let item of record_block_info_list) {
+                let record_block_compressed = Buffer.alloc(item['compressed_size']);
+                fs.readSync(fd, record_block_compressed, 0, record_block_compressed.length, file_pointer);
+                file_pointer += record_block_compressed.length;
+
+                // 4 bytes: compression type
+                let record_block_type = record_block_compressed.slice(0, 4);
+                // 4 bytes: adler32 checksum of decompressed record block
+                let checksum = struct.unpack('>I', record_block_compressed.slice(4, 8))[0];
+                let record_block;
+                if (_buffer_equals(record_block_type, Buffer.from([0x00, 0x00, 0x00, 0x00]))) {
+                    record_block = record_block_compressed.slice(8, record_block_compressed.length);
+                } else if (_buffer_equals(record_block_type, Buffer.from([0x01, 0x00, 0x00, 0x00]))) {
+                    if (lzo == null) {
+                        console.log("LZO compression is not supported");
+                        break;
+                    }
+                    //decompress
+                    let header = Buffer.concat([Buffer.from([0xf0]), struct.pack('>I', item['decompressed_size'])], 5);
+                    let compress_byte = Buffer.concat([header, record_block_compressed.slice(8, record_block_compressed.length)], record_block_compressed.length - 3);
+                    record_block = lzo.decompress(compress_byte, compress_byte.length);
+                } else if (_buffer_equals(record_block_type, Buffer.from([0x02, 0x00, 0x00, 0x00]))) {
+                    // decompress
+                    record_block = zlib.inflateSync(record_block_compressed.slice(8, record_block_compressed.length));
                 }
-                // record end index
-                let record_end;
-                if (i < this._key_list.length - 1) {
-                    record_end = this._key_list[i + 1]['key_id'];
-                } else {
-                    record_end = record_block.length + offset;
+                // notice that adler32 return signed value & 0xffffffff turn into unsigned
+                // but in js alder32 return unsigned already
+                assert.strictEqual(checksum, adler32.sum(record_block));
+
+                assert.strictEqual(record_block.length, item['decompressed_size']);
+                // split record block according to the offset info from key block
+
+                while (i < this._key_list.length) {
+                    let record_start = this._key_list[i]['key_id'];
+                    let key_text = this._key_list[i]['key_text'];
+                    // reach the end of current record block
+                    if (record_start - offset >= record_block.length) {
+                        break;
+                    }
+                    // record end index
+                    let record_end;
+                    if (i < this._key_list.length - 1) {
+                        record_end = this._key_list[i + 1]['key_id'];
+                    } else {
+                        record_end = record_block.length + offset;
+                    }
+                    i += 1;
+                    let data = record_block.slice(record_start - offset, record_end - offset);
+                    let output = {
+                        "key_text": key_text,
+                        "data": data
+                    };
+                    yield output;
                 }
-                i += 1;
-                let data = record_block.slice(record_start - offset, record_end - offset);
-                let  output = {
-                    "key_text": key_text,
-                    "data": data
-                };
-                console.log(output);
-                // return output;
+                offset += record_block.length;
+                size_counter += item['compressed_size'];
             }
-            offset += record_block.length;
-            size_counter += item['compressed_size'];
+            assert.strictEqual(size_counter, record_block_size);
+            fs.closeSync(fd);
         }
-        assert.strictEqual(size_counter, record_block_size);
-        fs.closeSync(fd);
+
+        return iterator.apply(this);
 
     }
 }
@@ -663,114 +685,112 @@ class MDX extends MDict {
 
 
     _decode_record_block() {
+        let iterator = function* () {
+            let fd = fs.openSync(this._fname, 'r');
+            let file_pointer = this._record_block_offset;
 
-        let fd = fs.openSync(this._fname,'r');
-        let file_pointer = this._record_block_offset;
+            let info_block = Buffer.alloc(this._number_width * 4);
+            fs.readSync(fd, info_block, 0, info_block.length, file_pointer);
+            file_pointer += info_block.length;
 
-        let info_block = Buffer.alloc(this._number_width*4);
-        fs.readSync(fd,info_block,0,info_block.length,file_pointer);
-        file_pointer+=info_block.length;
-        
-        let info_block_stream = streamifier.createReadStream(info_block);
-        let num_record_blocks = this._read_number(info_block_stream);
-        let num_entries = this._read_number(info_block_stream);
-        assert.strictEqual(num_entries, this._num_entries);
-        let record_block_info_size = this._read_number(info_block_stream);
-        let record_block_size = this._read_number(info_block_stream);
-
-
-        let record_size_block = Buffer.alloc(this._number_width*num_record_blocks*2);
-        fs.readSync(fd,record_size_block,0,record_size_block.length,file_pointer);
-        file_pointer+=record_size_block.length;
-        let record_size_stream = streamifier.createReadStream(record_size_block);
-
-        // record block info section
-        let record_block_info_list = []
-        let size_counter = 0
-        for (let i = 0; i < num_record_blocks; i++) {
-            let compressed_size = this._read_number(record_size_stream);
-            let decompressed_size = this._read_number(record_size_stream);
-            record_block_info_list.push({
-                "compressed_size": compressed_size,
-                "decompressed_size": decompressed_size
-            });
-            size_counter += this._number_width * 2
-        }
-        assert.strictEqual(size_counter, record_block_info_size);
+            let info_block_stream = streamifier.createReadStream(info_block);
+            let num_record_blocks = this._read_number(info_block_stream);
+            let num_entries = this._read_number(info_block_stream);
+            assert.strictEqual(num_entries, this._num_entries);
+            let record_block_info_size = this._read_number(info_block_stream);
+            let record_block_size = this._read_number(info_block_stream);
 
 
-        // actual record block
-        let offset = 0;
-        let i = 0;
-        size_counter = 0;
+            let record_size_block = Buffer.alloc(this._number_width * num_record_blocks * 2);
+            fs.readSync(fd, record_size_block, 0, record_size_block.length, file_pointer);
+            file_pointer += record_size_block.length;
+            let record_size_stream = streamifier.createReadStream(record_size_block);
 
-        for (let item of record_block_info_list) {
-            let record_block_compressed = Buffer.alloc(item['compressed_size']);   
-            fs.readSync(fd,record_block_compressed,0,record_block_compressed.length,file_pointer);
-            file_pointer+=record_block_compressed.length;
-
-            // 4 bytes: compression type
-            let record_block_type = record_block_compressed.slice(0, 4);
-            // 4 bytes: adler32 checksum of decompressed record block
-            let checksum = struct.unpack('>I', record_block_compressed.slice(4, 8))[0];
-            let record_block;
-            if (_buffer_equals(record_block_type, Buffer.from([0x00, 0x00, 0x00, 0x00]))) {
-                record_block = record_block_compressed.slice(8, record_block_compressed.length);
-            } else if (_buffer_equals(record_block_type, Buffer.from([0x01, 0x00, 0x00, 0x00]))) {
-                if (lzo == null) {
-                    console.log("LZO compression is not supported");
-                    break;
-                }
-                //decompress
-                let header = Buffer.concat([Buffer.from([0xf0]), struct.pack('>I', item['decompressed_size'])], 5);
-                let compress_byte = Buffer.concat([header, record_block_compressed.slice(8, record_block_compressed.length)], record_block_compressed.length - 3);
-                record_block = lzo.decompress(compress_byte, compress_byte.length);
-            } else if (_buffer_equals(record_block_type, Buffer.from([0x02, 0x00, 0x00, 0x00]))) {
-                // decompress
-                record_block = zlib.inflateSync(record_block_compressed.slice(8, record_block_compressed.length));
+            // record block info section
+            let record_block_info_list = []
+            let size_counter = 0
+            for (let i = 0; i < num_record_blocks; i++) {
+                let compressed_size = this._read_number(record_size_stream);
+                let decompressed_size = this._read_number(record_size_stream);
+                record_block_info_list.push({
+                    "compressed_size": compressed_size,
+                    "decompressed_size": decompressed_size
+                });
+                size_counter += this._number_width * 2
             }
-            // notice that adler32 return signed value & 0xffffffff turn into unsigned
-            // but in js alder32 return unsigned already
-            assert.strictEqual(checksum, adler32.sum(record_block));
+            assert.strictEqual(size_counter, record_block_info_size);
 
-            assert.strictEqual(record_block.length, item['decompressed_size']);
-            // split record block according to the offset info from key block
 
-            while (i < this._key_list.length) {
-                let record_start = this._key_list[i]['key_id'];
-                let key_text = this._key_list[i]['key_text'];
-                // reach the end of current record block
-                if (record_start - offset >= record_block.length) {
-                    break;
-                }
-                // record end index
-                let record_end;
-                if (i < this._key_list.length - 1) {
-                    record_end = this._key_list[i + 1]['key_id'];
-                } else {
-                    record_end = record_block.length + offset;
-                }
-                console.log(record_end);
-                i += 1;
-                let record = record_block.slice(record_start - offset, record_end - offset);
-                record = record.toString(this._encoding == 'UTF-16' ? 'utf16le' : this._encoding);
-                if (this._substyle && this._stylesheet) {
-                    record = this._substitute_stylesheet(record);
-                }
-                let  output = {
-                    "key_text": key_text,
-                    "data": record
-                };
-                // console.log(record);cls
+            // actual record block
+            let offset = 0;
+            let i = 0;
+            size_counter = 0;
 
-                return output;
+            for (let item of record_block_info_list) {
+                let record_block_compressed = Buffer.alloc(item['compressed_size']);
+                fs.readSync(fd, record_block_compressed, 0, record_block_compressed.length, file_pointer);
+                file_pointer += record_block_compressed.length;
+
+                // 4 bytes: compression type
+                let record_block_type = record_block_compressed.slice(0, 4);
+                // 4 bytes: adler32 checksum of decompressed record block
+                let checksum = struct.unpack('>I', record_block_compressed.slice(4, 8))[0];
+                let record_block;
+                if (_buffer_equals(record_block_type, Buffer.from([0x00, 0x00, 0x00, 0x00]))) {
+                    record_block = record_block_compressed.slice(8, record_block_compressed.length);
+                } else if (_buffer_equals(record_block_type, Buffer.from([0x01, 0x00, 0x00, 0x00]))) {
+                    if (lzo == null) {
+                        console.log("LZO compression is not supported");
+                        break;
+                    }
+                    //decompress
+                    let header = Buffer.concat([Buffer.from([0xf0]), struct.pack('>I', item['decompressed_size'])], 5);
+                    let compress_byte = Buffer.concat([header, record_block_compressed.slice(8, record_block_compressed.length)], record_block_compressed.length - 3);
+                    record_block = lzo.decompress(compress_byte, compress_byte.length);
+                } else if (_buffer_equals(record_block_type, Buffer.from([0x02, 0x00, 0x00, 0x00]))) {
+                    // decompress
+                    record_block = zlib.inflateSync(record_block_compressed.slice(8, record_block_compressed.length));
+                }
+                // notice that adler32 return signed value & 0xffffffff turn into unsigned
+                // but in js alder32 return unsigned already
+                assert.strictEqual(checksum, adler32.sum(record_block));
+
+                assert.strictEqual(record_block.length, item['decompressed_size']);
+                // split record block according to the offset info from key block
+
+                while (i < this._key_list.length) {
+                    let record_start = this._key_list[i]['key_id'];
+                    let key_text = this._key_list[i]['key_text'];
+                    // reach the end of current record block
+                    if (record_start - offset >= record_block.length) {
+                        break;
+                    }
+                    // record end index
+                    let record_end;
+                    if (i < this._key_list.length - 1) {
+                        record_end = this._key_list[i + 1]['key_id'];
+                    } else {
+                        record_end = record_block.length + offset;
+                    }
+                    i += 1;
+                    let record = record_block.slice(record_start - offset, record_end - offset);
+                    record = record.toString(this._encoding == 'UTF-16' ? 'utf16le' : this._encoding);
+                    if (this._substyle && this._stylesheet) {
+                        record = this._substitute_stylesheet(record);
+                    }
+                    let output = {
+                        "key_text": key_text,
+                        "data": record
+                    };
+                    yield output;
+                }
+                offset += record_block.length;
+                size_counter += item['compressed_size'];
             }
-            offset += record_block.length;
-            size_counter += item['compressed_size'];
+            assert.strictEqual(size_counter, record_block_size);
+            fs.closeSync(fd);
         }
-        assert.strictEqual(size_counter, record_block_size);
-        fs.closeSync(fd);
-
+        return iterator.apply(this);
     }
 }
 
@@ -778,12 +798,11 @@ class MDX extends MDict {
 
 
 
-let o = new MDX("./collins.mdx");
+let o = new MDX("collins.mdx");
+let o = new MDX("collins.mdx");
 
-let item = o.items();
 
-let fd =  fs.openSync('./item','w');
-fs.writeSync(fd,item.key_text);
-fs.writeSync(fd,'\n\n');
-fs.writeSync(fd,item.data);
-fs.closeSync(fd);
+
+for(let item of o.items()){
+    console.log(item.key_text);
+}
