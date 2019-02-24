@@ -27,6 +27,26 @@ function _unescape_entities(text) {
 //     return encrypt_key
 // }
 
+function word_compare(word1, word2) {
+    let min_length = word1.length > word2.length ? word2.length : word1.length;
+    for (let i = 0; i < min_length; i++) {
+        if (word1.charCodeAt(i) < word2.charCodeAt(i)) {
+            return -1;
+        } else if (word1.charCodeAt(i) > word2.charCodeAt(i)) {
+            return 1;
+        } else {
+            continue;
+        }
+    }
+    if (word1.length > word2.length) {
+        return 1;
+    } else if (word1.length < word2.length) {
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
 function ripemd128(byte) {
     let temp = _buffer_to_hex(byte);
     // console.log(temp);
@@ -104,12 +124,21 @@ class MDict {
         this.header = this._read_header();
         try {
             this._key_list = this._read_keys();
-            console.log(this._key_list[300]['key_id'])
+            // let fd = fs.openSync('./key_list', "w");
+            // for(let item of this._key_list){
+            //     fs.writeSync(fd,item.key_text);
+            //     fs.writeSync(fd,"\n");
+            //     console.log(item.key_text);
+            // }
+            // fs.closeSync(fd);
         } catch (e) {
             console.log("Try Brutal Force on Encrypted Key Blocks");
             this._key_list = this._read_keys_brutal();
         }
     }
+
+
+
 
     _read_keys_brutal() {
         let fd = fs.openSync(this._fname, "r");
@@ -421,11 +450,6 @@ class MDict {
         return key_list;
     }
 
-
-
-
-
-
     _decode_key_block_info(key_block_info_compressed) {
         let key_block_info = null;
         if (this._version >= 2) {
@@ -528,18 +552,18 @@ class MDD extends MDict {
         return this._decode_record_block();
     }
 
-    estract(filepath) {
+    extract(filepath) {
         if (!fs.existsSync(filepath)) {
             fs.mkdirSync(filepath);
         }
-
-        for (let item of items()) {
+        for (let item of this.items()) {
             let fname = item.key_text.replace(/\\/g, path.sep);
-            let dfname = datafolder + fname;
+            console.log(item.key_text);
+            let dfname = filepath + fname;
             if (!fs.existsSync(path.dirname(dfname))) {
-                fs.mkdirSync(dfname);
+                fs.mkdirSync(path.dirname(dfname));
             }
-            df = fs.openSync(dfname, 'w');
+            let df = fs.openSync(dfname, 'w');
             fs.writeSync(df, item.data, 0, item.data.length);
             fs.closeSync(df);
         }
@@ -661,10 +685,69 @@ class MDX extends MDict {
     constructor(fname, encoding = '', substyle = false, passcode = null) {
         super(fname, encoding, passcode);
         this._substyle = substyle;
+        this.extra_key = [];
+        this.binary_start = -1;
+        this.binary_end = this._key_list.length - 1;
     }
 
     items() {
         return this._decode_record_block();
+    }
+
+
+    linear_search(key) {
+        for (let item of this._key_list) {
+            if (key == item.key_text) {
+                return item;
+            }
+        }
+    }
+
+    binary_search(key) {
+        if (!this.extra_key.length) {
+            for (let i = 0; i < this._key_list.length; i++) {
+                let key_text = this._key_list[i].key_text.toLowerCase();
+                if (key_text.charCodeAt(0) >= 97 && key_text.charCodeAt(0) <= 122) {
+                    break;
+                } else {
+                    this.extra_key.push(this._key_list[i]);
+                    this.binary_start++;
+                }
+            }
+            for (let i = this._key_list.length - 1; i >= 0; i--) {
+                let key_text = this._key_list[i].key_text.toLowerCase();
+                if (key_text.charCodeAt(0) >= 97 && key_text.charCodeAt(0) <= 122) {
+                    break;
+                } else {
+                    this.extra_key.push(this._key_list[i]);
+                    this.binary_end--;
+                }
+            }
+        }
+        let lowercase = key.toLowerCase().replace(/[^a-z]/g, '');
+        //单词二分搜索
+        for (let start = this.binary_start, end = this.binary_end; start <= end;) {
+            let middle = parseInt((start + end) / 2);
+            let result = word_compare(lowercase, this._key_list[middle].key_text.toLowerCase().replace(/[^a-z]/g, ''));
+            // console.log(middle+":"+this._key_list[middle].key_text+":"+result);
+            switch (result) {
+                case 1:
+                    start = middle + 1;
+                    break;
+                case -1:
+                    end = middle - 1;
+                    break;
+                case 0:
+                    return this._key_list[middle];
+                    break;
+            }
+        }
+        for(let item of this.extra_key) {
+            if(key == item.key_text){
+                return item;
+            }
+        }
+        return -1;
     }
 
     _substitute_stylesheet(txt) {
@@ -792,17 +875,116 @@ class MDX extends MDict {
         }
         return iterator.apply(this);
     }
+
+    extract(path) {
+        let fd = fs.openSync(this._fname, 'r');
+        let file_pointer = this._record_block_offset;
+        let info_block = Buffer.alloc(this._number_width * 4);
+        fs.readSync(fd, info_block, 0, info_block.length, file_pointer);
+        file_pointer += info_block.length;
+
+        let info_block_stream = streamifier.createReadStream(info_block);
+        let num_record_blocks = this._read_number(info_block_stream);
+        let num_entries = this._read_number(info_block_stream);
+        assert.strictEqual(num_entries, this._num_entries);
+        let record_block_info_size = this._read_number(info_block_stream);
+        let record_block_size = this._read_number(info_block_stream);
+
+
+        let record_size_block = Buffer.alloc(this._number_width * num_record_blocks * 2);
+        fs.readSync(fd, record_size_block, 0, record_size_block.length, file_pointer);
+        file_pointer += record_size_block.length;
+        let record_size_stream = streamifier.createReadStream(record_size_block);
+
+        // record block info section
+        let record_block_info_list = []
+        let size_counter = 0
+        for (let i = 0; i < num_record_blocks; i++) {
+            let compressed_size = this._read_number(record_size_stream);
+            let decompressed_size = this._read_number(record_size_stream);
+            record_block_info_list.push({
+                "compressed_size": compressed_size,
+                "decompressed_size": decompressed_size
+            });
+            size_counter += this._number_width * 2
+        }
+        assert.strictEqual(size_counter, record_block_info_size);
+        // actual record block
+        size_counter = 0;
+        let record_fd = fs.openSync(path, 'w');
+        for (let item of record_block_info_list) {
+            let record_block_compressed = Buffer.alloc(item['compressed_size']);
+            fs.readSync(fd, record_block_compressed, 0, record_block_compressed.length, file_pointer);
+            file_pointer += record_block_compressed.length;
+
+            // 4 bytes: compression type
+            let record_block_type = record_block_compressed.slice(0, 4);
+            // 4 bytes: adler32 checksum of decompressed record block
+            let checksum = struct.unpack('>I', record_block_compressed.slice(4, 8))[0];
+            let record_block;
+            if (_buffer_equals(record_block_type, Buffer.from([0x00, 0x00, 0x00, 0x00]))) {
+                record_block = record_block_compressed.slice(8, record_block_compressed.length);
+            } else if (_buffer_equals(record_block_type, Buffer.from([0x01, 0x00, 0x00, 0x00]))) {
+                if (lzo == null) {
+                    console.log("LZO compression is not supported");
+                    break;
+                }
+                //decompress
+                let header = Buffer.concat([Buffer.from([0xf0]), struct.pack('>I', item['decompressed_size'])], 5);
+                let compress_byte = Buffer.concat([header, record_block_compressed.slice(8, record_block_compressed.length)], record_block_compressed.length - 3);
+                record_block = lzo.decompress(compress_byte, compress_byte.length);
+            } else if (_buffer_equals(record_block_type, Buffer.from([0x02, 0x00, 0x00, 0x00]))) {
+                // decompress
+                record_block = zlib.inflateSync(record_block_compressed.slice(8, record_block_compressed.length));
+            }
+            // notice that adler32 return signed value & 0xffffffff turn into unsigned
+            // but in js alder32 return unsigned already
+            assert.strictEqual(checksum, adler32.sum(record_block));
+
+            assert.strictEqual(record_block.length, item['decompressed_size']);
+            // split record block according to the offset info from key block
+
+            fs.writeSync(record_fd, record_block);
+            size_counter += item['compressed_size'];
+        }
+        assert.strictEqual(size_counter, record_block_size);
+        fs.closeSync(fd);
+        fs.closeSync(record_fd);
+    }
 }
 
 
 
 
 
-let o = new MDX("collins.mdx");
-let o = new MDX("collins.mdx");
+let o = new MDX("./dictionary/niujin.mdx");
+console.log(o.header)
 
+// var before = new Date().getTime();
+// console.log(o.binary_search("études"));
+// var after = new Date().getTime();
+// console.log(after - before);
 
+// before = new Date().getTime();
+// console.log(o.linear_search("études"));
+//  after = new Date().getTime();
+// console.log(after - before);
 
-for(let item of o.items()){
-    console.log(item.key_text);
-}
+// console.log(o.binary_end);
+// let i = 14209;
+// console.log(o._key_list[i]);
+// record_block=Buffer.alloc(o._key_list[i+1].key_id - o._key_list[i].key_id)
+// let fd = fs.openSync('./record', 'r');
+// fs.readSync(fd, record_block, 0, record_block.length, o._key_list[i].key_id);
+// console.log(o._encoding)
+// let record = record_block.toString(o._encoding == 'UTF-16' ? 'utf16le' : o._encoding);
+// if (o._substyle && o._stylesheet) {
+//     record = o._substitute_stylesheet(record);
+// }
+// console.log(record);
+// o.save_decompress_record_block();
+// let o = new MDD("niujin.mdd");
+// o.extract('./extract');
+// for(let item of o.items()){
+//     console.log(item.key_text);
+// }
