@@ -4,7 +4,7 @@ const fs = require("fs");
 const adler32 = require("adler32");
 const assert = require('assert');
 const streamifier = require('streamifier');
-const crypto = require('./crypto-api.js');
+const crypto = require('./lib/crypto-api.js');
 const zlib = require('zlib');
 const lzo = require("lzo-decompress");
 const Long = require("long");
@@ -117,7 +117,6 @@ function _parse_long(number) {
 class MDict {
 
     constructor(fname, encoding = '', passcode = null) {
-        //"./collins_en_ch.mdx"
         this._fname = fname;
         this._encoding = encoding.toUpperCase();
         this._passcode = passcode;
@@ -252,6 +251,9 @@ class MDict {
 
 
         let header_text = header_bytes.toString("utf16le", 0, header_bytes.length - 2);
+        let md5hasher = crypto.getHasher('md5');
+        md5hasher.update(header_text);
+        this.md5 = crypto.encoder.toHex(md5hasher.finalize());
         let header_tag = this._parse_header(header_text);
         // console.log(header_tag);
 
@@ -682,12 +684,20 @@ class MDD extends MDict {
 
 class MDX extends MDict {
 
-    constructor(fname, encoding = '', substyle = false, passcode = null) {
+    constructor(fname, extract_path = '', encoding = '', substyle = false, passcode = null) {
         super(fname, encoding, passcode);
+        this.extract_path = extract_path;        
         this._substyle = substyle;
         this.extra_key = [];
         this.binary_start = -1;
         this.binary_end = this._key_list.length - 1;
+        if (!extract_path) {
+            throw new Error("extract_path is needed");
+        }
+        if (!fs.existsSync(extract_path)) {
+            fs.mkdirSync(extract_path);
+        }
+        this.extract(path.join(extract_path,this.md5));
     }
 
     items() {
@@ -724,11 +734,12 @@ class MDX extends MDict {
                 }
             }
         }
-        let lowercase = key.toLowerCase().replace(/[^a-z]/g, '');
+        let word1 = key.toLowerCase().replace(/[^a-z]/g, '');
+        let word_match = [];
         //单词二分搜索
         for (let start = this.binary_start, end = this.binary_end; start <= end;) {
             let middle = parseInt((start + end) / 2);
-            let result = word_compare(lowercase, this._key_list[middle].key_text.toLowerCase().replace(/[^a-z]/g, ''));
+            let result = word_compare(word1, this._key_list[middle].key_text.toLowerCase().replace(/[^a-z]/g, ''));
             // console.log(middle+":"+this._key_list[middle].key_text+":"+result);
             switch (result) {
                 case 1:
@@ -738,13 +749,26 @@ class MDX extends MDict {
                     end = middle - 1;
                     break;
                 case 0:
-                    return this._key_list[middle];
+                    //前后泛查
+                    word_match.push(this._key_list[middle]);
+                    for (let j = middle - 1; middle >= this.binary_start; j--) {
+                        if (word_compare(word1, this._key_list[j].key_text.toLowerCase().replace(/[^a-z]/g, '')) == 0) {
+                            word_match.push(this._key_list[j]);
+                        }
+                    }
+                    for (let j = middle + 1; middle <= this.binary_end; j++) {
+                        if (word_compare(word1, this._key_list[j].key_text.toLowerCase().replace(/[^a-z]/g, '')) == 0) {
+                            word_match.push(this._key_list[j]);
+                        }
+                    }
+                    return word_match;
                     break;
             }
         }
-        for(let item of this.extra_key) {
-            if(key == item.key_text){
-                return item;
+        //在非英文单词中查找
+        for (let item of this.extra_key) {
+            if (key == item.key_text) {
+                return [item];
             }
         }
         return -1;
@@ -876,7 +900,7 @@ class MDX extends MDict {
         return iterator.apply(this);
     }
 
-    extract(path) {
+    extract(filepath) {
         let fd = fs.openSync(this._fname, 'r');
         let file_pointer = this._record_block_offset;
         let info_block = Buffer.alloc(this._number_width * 4);
@@ -911,7 +935,7 @@ class MDX extends MDict {
         assert.strictEqual(size_counter, record_block_info_size);
         // actual record block
         size_counter = 0;
-        let record_fd = fs.openSync(path, 'w');
+        let record_fd = fs.openSync(filepath, 'w');
         for (let item of record_block_info_list) {
             let record_block_compressed = Buffer.alloc(item['compressed_size']);
             fs.readSync(fd, record_block_compressed, 0, record_block_compressed.length, file_pointer);
@@ -952,39 +976,5 @@ class MDX extends MDict {
         fs.closeSync(record_fd);
     }
 }
-
-
-
-
-
-let o = new MDX("./dictionary/niujin.mdx");
-console.log(o.header)
-
-// var before = new Date().getTime();
-// console.log(o.binary_search("études"));
-// var after = new Date().getTime();
-// console.log(after - before);
-
-// before = new Date().getTime();
-// console.log(o.linear_search("études"));
-//  after = new Date().getTime();
-// console.log(after - before);
-
-// console.log(o.binary_end);
-// let i = 14209;
-// console.log(o._key_list[i]);
-// record_block=Buffer.alloc(o._key_list[i+1].key_id - o._key_list[i].key_id)
-// let fd = fs.openSync('./record', 'r');
-// fs.readSync(fd, record_block, 0, record_block.length, o._key_list[i].key_id);
-// console.log(o._encoding)
-// let record = record_block.toString(o._encoding == 'UTF-16' ? 'utf16le' : o._encoding);
-// if (o._substyle && o._stylesheet) {
-//     record = o._substitute_stylesheet(record);
-// }
-// console.log(record);
-// o.save_decompress_record_block();
-// let o = new MDD("niujin.mdd");
-// o.extract('./extract');
-// for(let item of o.items()){
-//     console.log(item.key_text);
-// }
+module.exports.MDX = MDX;
+module.exports.MDD = MDD;
