@@ -686,7 +686,6 @@ class MDX extends MDict {
 
     constructor(fname, extract_path = '', encoding = '', substyle = false, passcode = null) {
         super(fname, encoding, passcode);
-        this.extract_path = extract_path;        
         this._substyle = substyle;
         this.extra_key = [];
         this.binary_start = -1;
@@ -697,7 +696,10 @@ class MDX extends MDict {
         if (!fs.existsSync(extract_path)) {
             fs.mkdirSync(extract_path);
         }
-        this.extract(path.join(extract_path,this.md5));
+        this.extract_filepath = path.join(extract_path, this.md5);
+        if (!fs.existsSync(this.extract_filepath)) {
+            this.extract(this.extract_filepath);
+        }
     }
 
     items() {
@@ -705,7 +707,38 @@ class MDX extends MDict {
     }
 
 
-    linear_search(key) {
+    serach(key) {
+        let key_info = this.binary_search_key(key);
+        if(key_info ==-1){
+            return -1;
+        }
+        console.log(key_info);
+        if (!fs.existsSync(this.extract_filepath)) {
+            this.extract(this.extract_filepath);
+        }
+        let fd = fs.openSync(this.extract_filepath,'r');
+        let record_start = key_info.content.key_id;
+        let record_end;
+        if (key_info.index < this._key_list.length - 1) {
+            record_end = this._key_list[key_info.index+1].key_id;
+        } else{
+            record_end = this._key_list[this._key_list.length-1].key_id;
+        }
+        let record_buffer = Buffer.alloc(record_end-record_start);
+        fs.readSync(fd,record_buffer,0,record_end - record_start,record_start);
+        let record = record_buffer.toString(this._encoding == 'UTF-16' ? 'utf16le' : this._encoding);
+        if (this._substyle && this._stylesheet) {
+            record = this._substitute_stylesheet(record);
+        }
+        fs.closeSync(fd);
+        return  {
+            "key_text": key_info.content.key_text,
+            "data": record
+        };
+    }
+
+
+    linear_search_key(key) {
         for (let item of this._key_list) {
             if (key == item.key_text) {
                 return item;
@@ -713,14 +746,19 @@ class MDX extends MDict {
         }
     }
 
-    binary_search(key) {
+
+
+    binary_search_key(key) {
         if (!this.extra_key.length) {
             for (let i = 0; i < this._key_list.length; i++) {
                 let key_text = this._key_list[i].key_text.toLowerCase();
                 if (key_text.charCodeAt(0) >= 97 && key_text.charCodeAt(0) <= 122) {
                     break;
                 } else {
-                    this.extra_key.push(this._key_list[i]);
+                    this.extra_key.push({
+                        index: i,
+                        content: this._key_list[i]
+                    });
                     this.binary_start++;
                 }
             }
@@ -729,14 +767,17 @@ class MDX extends MDict {
                 if (key_text.charCodeAt(0) >= 97 && key_text.charCodeAt(0) <= 122) {
                     break;
                 } else {
-                    this.extra_key.push(this._key_list[i]);
+                    this.extra_key.push({
+                        index: i,
+                        content: this._key_list[i]
+                    });
                     this.binary_end--;
                 }
             }
         }
         let word1 = key.toLowerCase().replace(/[^a-z]/g, '');
         let word_match = [];
-        //单词二分搜索
+        //单词二分搜索        
         for (let start = this.binary_start, end = this.binary_end; start <= end;) {
             let middle = parseInt((start + end) / 2);
             let result = word_compare(word1, this._key_list[middle].key_text.toLowerCase().replace(/[^a-z]/g, ''));
@@ -748,27 +789,48 @@ class MDX extends MDict {
                 case -1:
                     end = middle - 1;
                     break;
-                case 0:
+                case 0: 
                     //前后泛查
-                    word_match.push(this._key_list[middle]);
-                    for (let j = middle - 1; middle >= this.binary_start; j--) {
+                    word_match.push({
+                        index: middle,
+                        content: this._key_list[middle]
+                    });
+                    for (let j = middle - 1; j >= this.binary_start; j--) {
                         if (word_compare(word1, this._key_list[j].key_text.toLowerCase().replace(/[^a-z]/g, '')) == 0) {
-                            word_match.push(this._key_list[j]);
+                            word_match.push({
+                                index: j,
+                                content: this._key_list[j]
+                            });
+                        } else {
+                            break;
                         }
                     }
-                    for (let j = middle + 1; middle <= this.binary_end; j++) {
+                    for (let j = middle + 1; j <= this.binary_end; j++) {
                         if (word_compare(word1, this._key_list[j].key_text.toLowerCase().replace(/[^a-z]/g, '')) == 0) {
-                            word_match.push(this._key_list[j]);
+                            word_match.push({
+                                index: j,
+                                content: this._key_list[j]
+                            });
+                        } else {
+                            break;
                         }
                     }
-                    return word_match;
+                    start = middle + 1;                    
                     break;
             }
         }
+        if (word_match.length > 0) {
+            for (let item of word_match) {
+                if (item.content.key_text == key) {
+                    return item;
+                }
+            }
+        }
+
         //在非英文单词中查找
         for (let item of this.extra_key) {
-            if (key == item.key_text) {
-                return [item];
+            if (key == item.content.key_text) {
+                return item;
             }
         }
         return -1;
