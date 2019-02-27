@@ -5,9 +5,33 @@ const MDX = mdict.MDX;
 const MDD = mdict.MDD;
 
 
-let mdx = new MDX("./niujin.mdx",'./mdx_records');
+function res_path_map(record, basepath) {
+    if (!basepath) {
+        return;
+    }
+    let res_paths = record.match(/(href="[^#{1}].*?")|(src=".*?")/g);
+    //去重
+    let paths_set= new Set(res_paths);
+    // res_paths.forEach(item=> paths_set.add(item));
+    for (let item of paths_set) {
+        let temp = item.replace(/href=('|")|src=('|")|sound:\/\/|entry:\/\/|('|")/g, "");
+        record = record.replace(new RegExp(temp,"g"),basepath+temp);
+        console.log(temp+"  replace:   "+basepath+temp)
+    }
+    return record;
+}
+
+let mdx = new MDX("./niujin.mdx", './dict_res');
+// let mdd = new MDD("./niujin.mdd");
+// mdd.extract("./dict_res");
 // console.log(mdx._key_list);
 // console.log(mdx.serach('abandon'));
+
+
+let record = mdx.serach("abandon").data;
+
+record = res_path_map(record,"../dict_res/");
+// console.log(record);
 let fd = fs.openSync('./result',"w");
-fs.writeSync(fd,mdx.serach("abandon").data);
+fs.writeSync(fd,record);
 fs.closeSync(fd);
