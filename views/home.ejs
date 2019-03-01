@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link rel="stylesheet" type="text/css" href='../resource/css/normalize.css'>
+    <link rel="stylesheet" type="text/css" href="../resource/css/base.css">
+    <link rel="stylesheet" type="text/css" href="../resource/css/home.css">
+    <script src="../resource/js/jquery-1.9.0.min.js"></script>
+</head>
+
+<body>
+
+    <div class="menu_wrapper">
+        <div class="menu_bar">
+            <ul class="clearfix">
+                <li class="active">单词</li>
+                <li>阅读</li>
+            </ul>
+        </div>
+    </div>
+
+
+    <div class="search_wrapper">
+        <div class="search_bar clearfix">
+            <input type="text" class="search_input">
+            <div class="search_btn" id="search">
+                <img src="../resource/images/search.png" alt="search">
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+
+    </div>
+
+    <script>
+        window.onscroll = function () {
+            var box = document.getElementsByClassName("search_wrapper");
+            var pos = box.getBoundingClientRect();
+            console.log(pos.top);
+            if (pos.top <= 0) {
+                if ($(".search_wrapper").hasClass('fix_top')) {
+                    return;
+                }
+                $(".search_wrapper").addClass('fix_top');
+
+            } else {
+                if (!$(".search_wrapper").hasClass('fix_top')) {
+                    return;
+                }
+                $(".search_wrapper").removeClass('fix_top');
+            }
+        }
+        $("#search").click(function () {
+            $.getJSON("/search?word=" + $(".search_input").val(), function (data) {
+                if (data.status != -1) {
+                    $(".container").html(data.html);
+                } else {
+                    console.log("请求出错");
+                }
+            });
+        });
+        $('.search_input').bind('keyup', function (event) {
+            if (event.keyCode == "13") {
+                $('#search').click();
+            }
+        });
+    </script>
+
+</body>
+
+</html>
